@@ -3,7 +3,7 @@ import { formatISO, subDays } from 'date-fns';
 
 // In a real app, this would be in a secure backend
 export const USERS: User[] = [
-  { id: 1, username: 'admin', password: '1', name: 'Admin Tsoft', role: Role.Admin, isActive: true },
+  { id: 1, username: 'admin', password: '1', name: 'Admin Tifo', role: Role.Admin, isActive: true },
   { id: 2, username: 'thuytien', password: 'password', name: 'Thuỷ Tiên', role: Role.Agent, discountPercentage: 25, isActive: true },
 ];
 

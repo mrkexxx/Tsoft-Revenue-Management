@@ -3,8 +3,10 @@ import { User, Order, Package, DailyDebt, DebtStatus, ActivationStatus, PaymentS
 import * as api from '../services/api';
 import AgentManagementModal from './AgentManagementModal';
 import DebtDetailModal from './DebtDetailModal';
-import { formatCurrency, exportToJSON } from '../utils';
-import { format, isAfter, isBefore, startOfMonth, subMonths, isWithinInterval, getDate, setDate, parseISO, startOfDay, formatISO } from 'date-fns';
+import RevenueChart from './RevenueChart';
+import { formatCurrency, exportToJSON, exportToCSV } from '../utils';
+import { format, isAfter, isBefore, subMonths, isWithinInterval, parseISO, startOfDay, endOfDay, startOfWeek, endOfWeek, formatISO } from 'date-fns';
+import { vi } from 'date-fns/locale';
 
 interface AdminDashboardProps {
   user: User;
@@ -35,10 +37,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
     const [orderAgentFilter, setOrderAgentFilter] = useState('all');
     const [startDateFilter, setStartDateFilter] = useState('');
     const [endDateFilter, setEndDateFilter] = useState('');
+    const [orderEmailFilter, setOrderEmailFilter] = useState('');
     
     // Filter states for debt tab
     const [debtAgentFilter, setDebtAgentFilter] = useState('all');
     const [debtStatusFilter, setDebtStatusFilter] = useState('all');
+    
+    const [chartPeriod, setChartPeriod] = useState<'week' | 'month' | 'year'>('week');
     
     const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -75,7 +80,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
         const totalOrders = orders.length;
 
         const totalNetRevenue = orders.reduce((sum, order) => {
-            if (order.actual_revenue !== undefined) {
+            if (order.actual_revenue != null) {
                 return sum + order.actual_revenue;
             }
             const agent = agents.find(a => a.id === order.agentId);
@@ -85,45 +90,110 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
 
         // Revenue comparison
         const now = new Date();
-        const startOfThisMonth = startOfMonth(now);
-        const startOfLastMonth = startOfMonth(subMonths(now, 1));
-        // Use the same day of the month for comparison
-        const endOfLastMonthPeriod = setDate(startOfLastMonth, getDate(now));
+        const startOfTodayDate = startOfDay(now);
+        const endOfTodayDate = endOfDay(now);
         
-        const thisMonthRevenue = orders
-            .filter(o => isWithinInterval(parseISO(o.sold_at), { start: startOfThisMonth, end: now }))
+        const startOfThisWeekDate = startOfWeek(now, { weekStartsOn: 1 });
+        const endOfThisWeekDate = endOfWeek(now, { weekStartsOn: 1 });
+        
+        const todayRevenue = orders
+            .filter(o => isWithinInterval(parseISO(o.sold_at), { start: startOfTodayDate, end: endOfTodayDate }))
             .reduce((sum, o) => sum + o.price, 0);
 
-        const lastMonthRevenue = orders
-            .filter(o => isWithinInterval(parseISO(o.sold_at), { start: startOfLastMonth, end: endOfLastMonthPeriod }))
+        const thisWeekRevenue = orders
+            .filter(o => isWithinInterval(parseISO(o.sold_at), { start: startOfThisWeekDate, end: endOfThisWeekDate }))
             .reduce((sum, o) => sum + o.price, 0);
-
-        let percentageChange = 0;
-        let trend: 'increase' | 'decrease' | 'flat' | 'new' = 'flat';
-
-        if (lastMonthRevenue > 0) {
-            percentageChange = ((thisMonthRevenue - lastMonthRevenue) / lastMonthRevenue) * 100;
-            if (percentageChange > 0) trend = 'increase';
-            else if (percentageChange < 0) trend = 'decrease';
-        } else if (thisMonthRevenue > 0) {
-            trend = 'new'; // No data last month to compare, but there is data now
-            percentageChange = 100; // Represent as 100% increase from 0
-        }
 
         return {
             totalGrossRevenue,
             totalNetRevenue,
             totalOrders,
-            revenueComparison: {
-                percentageChange,
-                trend
-            }
+            todayRevenue,
+            thisWeekRevenue
         };
     }, [orders, agents]);
+
+    const chartData = useMemo(() => {
+        const data = [];
+        const now = new Date();
+
+        if (chartPeriod === 'week') {
+            for (let i = 6; i >= 0; i--) {
+                const date = startOfDay(now);
+                date.setDate(date.getDate() - i);
+                const dateStr = format(date, 'dd/MM');
+                
+                const dailyOrders = orders.filter(o => format(parseISO(o.sold_at), 'dd/MM') === dateStr);
+                const dailyGross = dailyOrders.reduce((sum, o) => sum + o.price, 0);
+                const dailyNet = dailyOrders.reduce((sum, order) => {
+                    if (order.actual_revenue != null) {
+                        return sum + order.actual_revenue;
+                    }
+                    const agent = agents.find(a => a.id === order.agentId);
+                    const discount = agent?.discountPercentage || 0;
+                    return sum + (order.price * (1 - discount / 100));
+                }, 0);
+                
+                data.push({
+                    date: dateStr,
+                    revenue: dailyGross,
+                    netRevenue: dailyNet
+                });
+            }
+        } else if (chartPeriod === 'month') {
+            for (let i = 29; i >= 0; i--) {
+                const date = startOfDay(now);
+                date.setDate(date.getDate() - i);
+                const dateStr = format(date, 'dd/MM');
+                
+                const dailyOrders = orders.filter(o => format(parseISO(o.sold_at), 'dd/MM') === dateStr);
+                const dailyGross = dailyOrders.reduce((sum, o) => sum + o.price, 0);
+                const dailyNet = dailyOrders.reduce((sum, order) => {
+                    if (order.actual_revenue != null) {
+                        return sum + order.actual_revenue;
+                    }
+                    const agent = agents.find(a => a.id === order.agentId);
+                    const discount = agent?.discountPercentage || 0;
+                    return sum + (order.price * (1 - discount / 100));
+                }, 0);
+                
+                data.push({
+                    date: dateStr,
+                    revenue: dailyGross,
+                    netRevenue: dailyNet
+                });
+            }
+        } else if (chartPeriod === 'year') {
+            for (let i = 11; i >= 0; i--) {
+                const date = subMonths(now, i);
+                const monthStr = format(date, 'MM/yyyy');
+                
+                const monthlyOrders = orders.filter(o => format(parseISO(o.sold_at), 'MM/yyyy') === monthStr);
+                const monthlyGross = monthlyOrders.reduce((sum, o) => sum + o.price, 0);
+                const monthlyNet = monthlyOrders.reduce((sum, order) => {
+                    if (order.actual_revenue != null) {
+                        return sum + order.actual_revenue;
+                    }
+                    const agent = agents.find(a => a.id === order.agentId);
+                    const discount = agent?.discountPercentage || 0;
+                    return sum + (order.price * (1 - discount / 100));
+                }, 0);
+                
+                data.push({
+                    date: monthStr,
+                    revenue: monthlyGross,
+                    netRevenue: monthlyNet
+                });
+            }
+        }
+
+        return data;
+    }, [orders, agents, chartPeriod]);
 
     const filteredOrders = useMemo(() => {
         return orders.filter(order => {
             const agentMatch = orderAgentFilter === 'all' || order.agentId === parseInt(orderAgentFilter, 10);
+            const emailMatch = !orderEmailFilter || order.account_email?.toLowerCase().includes(orderEmailFilter.toLowerCase());
             
             const dateMatch = (() => {
                 if (!startDateFilter && !endDateFilter) return true;
@@ -137,9 +207,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                 return true;
             })();
 
-            return agentMatch && dateMatch;
+            return agentMatch && dateMatch && emailMatch;
         });
-    }, [orders, orderAgentFilter, startDateFilter, endDateFilter]);
+    }, [orders, orderAgentFilter, startDateFilter, endDateFilter, orderEmailFilter]);
         
     const filteredDebts = useMemo(() => {
         return dailyDebts.filter(debt => {
@@ -186,9 +256,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
         setOrderAgentFilter('all');
         setStartDateFilter('');
         setEndDateFilter('');
+        setOrderEmailFilter('');
     };
     
     const handleAddOrder = async (newOrderData: Omit<Order, 'id'>) => {
+        // Check for duplicate email on the same day
+        const today = new Date();
+        const isDuplicate = orders.some(order => {
+            if (!order.account_email) return false;
+            const orderDate = parseISO(order.sold_at);
+            return order.account_email.toLowerCase() === newOrderData.account_email?.toLowerCase() && 
+                   orderDate.getDate() === today.getDate() &&
+                   orderDate.getMonth() === today.getMonth() &&
+                   orderDate.getFullYear() === today.getFullYear();
+        });
+
+        if (isDuplicate) {
+            alert('Đơn hàng với email này đã tồn tại trong ngày hôm nay. Không thể thêm mới.');
+            return;
+        }
+
         try {
             const newOrder = await api.addOrder(newOrderData);
             await api.logAction(user.id, user.name, `Tạo mới đơn hàng #${newOrder.id} (${formatCurrency(newOrder.price)}) cho đại lý '${getAgentName(newOrder.agentId)}'.`);
@@ -215,6 +302,18 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
         } catch (error) {
             console.error('Failed to update order:', error);
             alert('Không thể cập nhật đơn hàng.');
+        }
+    };
+    
+    const handleToggleActivation = async (order: Order) => {
+        const newStatus = order.status === ActivationStatus.Activated ? ActivationStatus.NotActivated : ActivationStatus.Activated;
+        try {
+            await api.updateOrder({ ...order, status: newStatus });
+            await api.logAction(user.id, user.name, `Cập nhật trạng thái đơn hàng #${order.id} thành '${newStatus}'.`);
+            await fetchData();
+        } catch (error) {
+            console.error('Failed to update order status:', error);
+            alert('Không thể cập nhật trạng thái đơn hàng.');
         }
     };
     
@@ -284,15 +383,84 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
         return <div className="flex items-center justify-center h-screen text-xl">Đang tải dữ liệu...</div>;
     }
     
-    const renderOrdersTab = () => (
+    const handleExportOrders = () => {
+        const dataToExport = filteredOrders.map((order, index) => {
+            const agent = agents.find(a => a.id === order.agentId);
+            const discount = agent?.discountPercentage || 0;
+            const calculatedNetRevenue = order.price * (1 - discount / 100);
+            const actualRevenue = order.actual_revenue ?? calculatedNetRevenue;
+            
+            return {
+                stt: index + 1,
+                account: `${order.account_name}\n${order.account_email || ''}`,
+                package: getPackageName(order.packageId),
+                price: order.price,
+                netRevenue: actualRevenue,
+                notes: order.notes || '',
+                agent: getAgentName(order.agentId),
+                sold_at: format(parseISO(order.sold_at), 'dd/MM/yyyy'),
+                status: order.status === ActivationStatus.Activated ? 'Approved' : 'Not Approved',
+                paymentStatus: order.paymentStatus
+            };
+        });
+
+        const headers = {
+            stt: 'STT',
+            account: 'Tài khoản',
+            package: 'Gói',
+            price: 'Giá',
+            netRevenue: 'Số tiền thực thu',
+            notes: 'Ghi chú',
+            agent: 'Đại lý',
+            sold_at: 'Ngày bán',
+            status: 'Tình trạng approve',
+            paymentStatus: 'Thanh toán'
+        };
+
+        exportToCSV(dataToExport, headers, `tsoft_all_orders_${format(new Date(), 'yyyyMMdd_HHmmss')}`);
+    };
+
+    const renderOrdersTab = () => {
+        const filteredGrossRevenue = filteredOrders.reduce((sum, order) => sum + order.price, 0);
+        const filteredNetRevenue = filteredOrders.reduce((sum, order) => {
+            if (order.actual_revenue != null) {
+                return sum + order.actual_revenue;
+            }
+            const agent = agents.find(a => a.id === order.agentId);
+            const discount = agent?.discountPercentage || 0;
+            return sum + (order.price * (1 - discount / 100));
+        }, 0);
+        const filteredDebt = filteredOrders.reduce((sum, order) => {
+            if (order.paymentStatus === PaymentStatus.Unpaid) {
+                if (order.actual_revenue != null) {
+                    return sum + order.actual_revenue;
+                }
+                const agent = agents.find(a => a.id === order.agentId);
+                const discount = agent?.discountPercentage || 0;
+                return sum + (order.price * (1 - discount / 100));
+            }
+            return sum;
+        }, 0);
+
+        return (
         <div className="p-6 overflow-x-auto bg-slate-800 rounded-lg shadow-lg">
              <div className="flex items-center justify-between mb-6">
                 <h2 className="text-3xl font-bold text-slate-100">Tất cả Đơn hàng ({filteredOrders.length})</h2>
-                <button onClick={() => setIsAddOrderModalOpen(true)} className="px-5 py-2 text-lg font-semibold text-white transition-colors duration-200 rounded-md bg-primary hover:bg-primary-focus">+ Thêm đơn hàng</button>
+                <div className="flex gap-4">
+                    <button onClick={handleExportOrders} className="px-5 py-2 text-lg font-semibold text-white transition-colors duration-200 bg-green-600 rounded-md hover:bg-green-700">Xuất Excel</button>
+                    <button onClick={() => setIsAddOrderModalOpen(true)} className="px-5 py-2 text-lg font-semibold text-white transition-colors duration-200 rounded-md bg-primary hover:bg-primary-focus">+ Thêm đơn hàng</button>
+                </div>
              </div>
              
              {/* FILTERS */}
-             <div className="grid grid-cols-1 gap-4 p-4 mb-6 md:grid-cols-2 lg:grid-cols-4 bg-slate-700/50 rounded-lg">
+             <div className="grid grid-cols-1 gap-4 p-4 mb-6 md:grid-cols-2 lg:grid-cols-5 bg-slate-700/50 rounded-lg">
+                <input 
+                    type="text" 
+                    placeholder="Tìm theo email khách hàng..." 
+                    value={orderEmailFilter} 
+                    onChange={e => setOrderEmailFilter(e.target.value)} 
+                    className="w-full px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md focus:ring-primary-focus focus:border-primary-focus"
+                />
                 <select value={orderAgentFilter} onChange={e => setOrderAgentFilter(e.target.value)} className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
                     <option value="all">Lọc theo đại lý</option>
                     {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
@@ -308,6 +476,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                  <button onClick={handleClearOrderFilters} className="px-4 py-2 text-lg font-semibold text-white bg-slate-600 rounded-md hover:bg-slate-500">Xoá bộ lọc</button>
              </div>
 
+             {/* FILTER SUMMARY */}
+             <div className="flex gap-8 mb-6 p-4 bg-slate-700/30 rounded-lg border border-slate-600">
+                 <div>
+                     <p className="text-sm text-slate-400 uppercase tracking-wider">Tổng doanh thu (Gross)</p>
+                     <p className="text-2xl font-bold text-primary">{formatCurrency(filteredGrossRevenue)}</p>
+                 </div>
+                 <div>
+                     <p className="text-sm text-slate-400 uppercase tracking-wider">Tổng số tiền thực thu (Net)</p>
+                     <p className="text-2xl font-bold text-green-400">{formatCurrency(filteredNetRevenue)}</p>
+                 </div>
+                 <div>
+                     <p className="text-sm text-slate-400 uppercase tracking-wider">Công nợ</p>
+                     <p className="text-2xl font-bold text-red-400">{formatCurrency(filteredDebt)}</p>
+                 </div>
+             </div>
+
             <table className="w-full text-left table-auto">
                 <thead>
                     <tr className="border-b border-slate-700">
@@ -319,7 +503,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                         <th className="p-3 text-lg font-semibold tracking-wide">Ghi chú</th>
                         <th className="p-3 text-lg font-semibold tracking-wide">Đại lý</th>
                         <th className="p-3 text-lg font-semibold tracking-wide">Ngày bán</th>
-                        <th className="p-3 text-lg font-semibold tracking-wide">Trạng thái K.hoạt</th>
+                        <th className="p-3 text-lg font-semibold tracking-wide">Tình trạng approve</th>
                         <th className="p-3 text-lg font-semibold tracking-wide">Thanh toán</th>
                         <th className="p-3 text-lg font-semibold tracking-wide">Hành động</th>
                     </tr>
@@ -340,9 +524,23 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                                 <td className="p-3 text-lg text-slate-400 max-w-xs truncate" title={order.notes}>{order.notes}</td>
                                 <td className="p-3 text-lg">{getAgentName(order.agentId)}</td>
                                 <td className="p-3 text-lg">{format(parseISO(order.sold_at), 'dd/MM/yyyy')}</td>
-                                <td className="p-3"><span className={`px-2 py-1 text-sm font-semibold rounded-full ${order.status === ActivationStatus.Activated ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{order.status}</span></td>
+                                <td className="p-3">
+                                    <button 
+                                        onClick={() => handleToggleActivation(order)}
+                                        className={`px-2 py-1 text-sm font-semibold rounded-full cursor-pointer transition-colors ${order.status === ActivationStatus.Activated ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'}`}
+                                    >
+                                        {order.status === ActivationStatus.Activated ? 'Approved' : 'Not Approved'}
+                                    </button>
+                                </td>
                                 <td className="p-3"><span className={`px-2 py-1 text-sm font-semibold rounded-full ${order.paymentStatus === PaymentStatus.Paid ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'}`}>{order.paymentStatus}</span></td>
-                                <td className="p-3"><button onClick={() => handleOpenEditModal(order)} className="px-4 py-1 font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700">Sửa</button></td>
+                                <td className="p-3">
+                                    <div className="flex gap-2">
+                                        {order.status === ActivationStatus.NotActivated && (
+                                            <button onClick={() => handleToggleActivation(order)} className="px-4 py-1 font-bold text-white bg-green-600 rounded-md hover:bg-green-700">Approve</button>
+                                        )}
+                                        <button onClick={() => handleOpenEditModal(order)} className="px-4 py-1 font-bold text-white bg-blue-600 rounded-md hover:bg-blue-700">Sửa</button>
+                                    </div>
+                                </td>
                             </tr>
                         )
                     })}
@@ -350,7 +548,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
             </table>
             {filteredOrders.length === 0 && <p className="mt-4 text-center text-slate-400">Không có đơn hàng nào khớp.</p>}
         </div>
-    );
+    )};
     
     const renderAgentsTab = () => (
          <div className="p-6 bg-slate-800 rounded-lg shadow-lg">
@@ -476,22 +674,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
     const activeTabClasses = "px-6 py-3 text-lg font-semibold text-white bg-slate-700 rounded-t-lg";
     const inactiveTabClasses = "px-6 py-3 text-lg font-semibold text-slate-400 hover:text-white";
 
-    const renderComparison = () => {
-        const { percentageChange, trend } = globalStats.revenueComparison;
-        const isPositive = trend === 'increase' || trend === 'new';
-        const color = isPositive ? 'text-green-400' : trend === 'decrease' ? 'text-red-400' : 'text-slate-400';
-        const icon = isPositive ? '↑' : '↓';
-
-        if (trend === 'new') {
-             return <p className={`text-3xl font-bold ${color}`}>Có doanh thu</p>
-        }
-        if (trend === 'flat' && percentageChange === 0) {
-            return <p className={`text-3xl font-bold ${color}`}>Không đổi</p>
-        }
+    const renderRevenueSummary = () => {
+        const { todayRevenue, thisWeekRevenue } = globalStats;
 
         return (
-            <div className={`flex items-baseline gap-2 ${color}`}>
-                <p className="text-4xl font-bold">{icon} {Math.abs(percentageChange).toFixed(1)}%</p>
+            <div className="flex flex-col gap-2">
+                <div className="text-sm text-slate-400">
+                    <p>Hôm nay: <span className="text-2xl font-bold text-green-400">{formatCurrency(todayRevenue)}</span></p>
+                    <p className="mt-2">Tuần này: <span className="text-2xl font-bold text-blue-400">{formatCurrency(thisWeekRevenue)}</span></p>
+                </div>
             </div>
         )
     };
@@ -500,8 +691,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
     return (
         <div className="container p-4 mx-auto md:p-8">
             <header className="flex flex-col items-start justify-between gap-4 mb-8 md:flex-row md:items-center">
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col gap-1">
                      <h1 className="text-5xl font-extrabold text-white">Admin Dashboard</h1>
+                     <p className="text-xl text-slate-400 capitalize">{format(new Date(), "EEEE, 'ngày' dd 'tháng' MM 'năm' yyyy", { locale: vi })}</p>
                 </div>
                  <div className="flex items-center gap-4">
                      <button onClick={handleExportData} className="px-4 py-2 text-lg font-semibold text-white transition-colors duration-200 bg-blue-600 rounded-lg shadow-md hover:bg-blue-700">Export Dữ liệu</button>
@@ -528,12 +720,31 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({ user, onLogout }) => {
                         <p className="text-5xl font-bold text-blue-400">{globalStats.totalOrders}</p>
                     </div>
                     <div className="p-6 rounded-lg bg-slate-700">
-                        <h4 className="text-lg text-slate-400">So với tháng trước (cùng kỳ)</h4>
-                        {renderComparison()}
+                        <h4 className="text-lg text-slate-400">Doanh thu gần đây</h4>
+                        {renderRevenueSummary()}
                     </div>
                 </div>
             </div>
 
+            <div className="mb-8 p-6 bg-slate-800 rounded-lg shadow-lg">
+                <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-xl font-bold text-slate-100">
+                        {chartPeriod === 'week' ? 'Biểu đồ doanh số 7 ngày gần nhất' : 
+                         chartPeriod === 'month' ? 'Biểu đồ doanh số 30 ngày gần nhất' : 
+                         'Biểu đồ doanh số 12 tháng gần nhất'}
+                    </h3>
+                    <select 
+                        value={chartPeriod} 
+                        onChange={e => setChartPeriod(e.target.value as 'week' | 'month' | 'year')}
+                        className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus"
+                    >
+                        <option value="week">Theo tuần</option>
+                        <option value="month">Theo tháng</option>
+                        <option value="year">Theo năm</option>
+                    </select>
+                </div>
+                <RevenueChart data={chartData} title="" />
+            </div>
 
             <div className="flex mb-0 border-b-2 border-slate-700">
                 <button onClick={() => setActiveTab('orders')} className={activeTab === 'orders' ? activeTabClasses : inactiveTabClasses}>Đơn hàng</button>
@@ -587,7 +798,6 @@ interface AddOrderModalProps {
 const AddOrderModal: React.FC<AddOrderModalProps> = ({ agents, packages, onClose, onSave }) => {
     const [agentId, setAgentId] = useState<number | ''>('');
     const [packageId, setPackageId] = useState<number | ''>('');
-    const [accountName, setAccountName] = useState('');
     const [accountEmail, setAccountEmail] = useState('');
     const [price, setPrice] = useState<number | ''>('');
     const [notes, setNotes] = useState('');
@@ -603,13 +813,13 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ agents, packages, onClose
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!agentId || !packageId || !accountName) {
+        if (!agentId || !packageId || !accountEmail) {
             alert('Vui lòng điền đầy đủ thông tin bắt buộc.');
             return;
         }
         setIsSubmitting(true);
         onSave({
-            account_name: accountName,
+            account_name: accountEmail.split('@')[0], // Use part of email as name since it's required by type
             account_email: accountEmail,
             packageId: Number(packageId),
             price: Number(price),
@@ -632,8 +842,7 @@ const AddOrderModal: React.FC<AddOrderModalProps> = ({ agents, packages, onClose
                             <option value="" disabled>-- Chọn đại lý --</option>
                             {agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
                         </select>
-                        <input type="text" placeholder="Tên khách hàng" value={accountName} onChange={e => setAccountName(e.target.value)} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md" />
-                        <input type="email" placeholder="Email khách hàng" value={accountEmail} onChange={e => setAccountEmail(e.target.value)} className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md" />
+                        <input type="email" placeholder="Email khách hàng" value={accountEmail} onChange={e => setAccountEmail(e.target.value)} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md md:col-span-2" />
                         <select value={packageId} onChange={e => setPackageId(Number(e.target.value))} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none">
                             <option value="" disabled>-- Chọn gói --</option>
                             {packages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -661,7 +870,7 @@ interface EditOrderModalProps {
     packages: Package[];
     onClose: () => void;
     onUpdate: (orderData: Order) => void;
-    onDelete: (orderId: number) => void;
+    onDelete: (orderId: number) => Promise<void>;
 }
 
 const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, agents, packages, onClose, onUpdate, onDelete }) => {
@@ -700,8 +909,14 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, agents, packages
         // Parent handles closing
     };
     
-    const handleDelete = () => {
-        onDelete(order.id);
+    const handleDelete = async () => {
+        if (order.paymentStatus === PaymentStatus.Paid) {
+            alert('Không thể xoá đơn hàng đã thanh toán.');
+            return;
+        }
+        setIsSubmitting(true);
+        await onDelete(order.id);
+        setIsSubmitting(false);
     }
 
     return (
@@ -743,10 +958,10 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, agents, packages
                             <input type="number" name="actual_revenue" value={formData.actual_revenue || ''} onChange={handleInputChange} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md" />
                         </div>
                         <div>
-                            <label className="block mb-1 text-slate-400">Trạng thái kích hoạt</label>
+                            <label className="block mb-1 text-slate-400">Tình trạng approve</label>
                             <select name="status" value={formData.status} onChange={handleInputChange} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none">
-                                <option value={ActivationStatus.Activated}>{ActivationStatus.Activated}</option>
-                                <option value={ActivationStatus.NotActivated}>{ActivationStatus.NotActivated}</option>
+                                <option value={ActivationStatus.Activated}>Approved</option>
+                                <option value={ActivationStatus.NotActivated}>Not Approved</option>
                             </select>
                         </div>
                         <div className="md:col-span-2">
@@ -762,7 +977,13 @@ const EditOrderModal: React.FC<EditOrderModalProps> = ({ order, agents, packages
                         </div>
                     </div>
                     <div className="flex justify-between gap-4 !mt-8">
-                        <button type="button" onClick={handleDelete} disabled={isSubmitting} className="px-6 py-3 text-lg font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">Xoá</button>
+                        {order.paymentStatus !== PaymentStatus.Paid ? (
+                            <button type="button" onClick={handleDelete} disabled={isSubmitting} className="px-6 py-3 text-lg font-semibold text-white bg-red-600 rounded-md hover:bg-red-700">Xoá</button>
+                        ) : (
+                            <div title="Không thể xoá đơn đã thanh toán">
+                                <button type="button" disabled className="px-6 py-3 text-lg font-semibold text-white bg-red-600/50 rounded-md cursor-not-allowed">Xoá</button>
+                            </div>
+                        )}
                         <div className="flex gap-4">
                             <button type="button" onClick={onClose} disabled={isSubmitting} className="px-6 py-3 text-lg font-semibold text-white bg-slate-600 rounded-md hover:bg-slate-500">Huỷ</button>
                             <button type="submit" disabled={isSubmitting} className="px-6 py-3 text-lg font-semibold text-white bg-primary rounded-md hover:bg-primary-focus">

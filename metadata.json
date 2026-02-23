@@ -1,5 +1,5 @@
 {
-  "name": "Remix: Tsoft Revenue Management",
-  "description": "A web application for Tsoft to manage sales revenue across multiple agents. Features role-based access for Admins and Agents, package management, order tracking, and revenue statistics with charts and CSV export.",
+  "name": "Remix: Tifo Revenue Management",
+  "description": "A web application for Tifo to manage sales revenue across multiple agents. Features role-based access for Admins and Agents, package management, order tracking, and revenue statistics with charts and CSV export.",
   "requestFramePermissions": []
 }

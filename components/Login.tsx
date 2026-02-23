@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 
 interface LoginProps {
-  onLogin: (username: string, password: string) => { success: boolean, message?: string };
+  onLogin: (username: string, password: string) => Promise<{ success: boolean, message?: string }>;
 }
 
 const Login: React.FC<LoginProps> = ({ onLogin }) => {
@@ -9,10 +9,10 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('1');
   const [error, setError] = useState('');
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    const result = onLogin(username, password);
+    const result = await onLogin(username, password);
     if (!result.success) {
       setError(result.message || 'Đã có lỗi xảy ra.');
     }
@@ -22,7 +22,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
     <div className="flex items-center justify-center min-h-screen bg-slate-900">
       <div className="w-full max-w-md p-8 space-y-8 bg-slate-800 rounded-lg shadow-lg shadow-slate-700/50">
         <div>
-          <h1 className="text-4xl font-extrabold text-center text-primary">TSOFT REVENUE</h1>
+          <h1 className="text-4xl font-extrabold text-center text-primary">Tifo REVENUE</h1>
           <h2 className="mt-2 text-2xl font-bold text-center text-slate-300">Đăng nhập hệ thống</h2>
         </div>
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>

@@ -70,6 +70,7 @@ export interface AdminLog {
 export interface ChartData {
   date: string;
   revenue: number;
+  netRevenue?: number;
 }
 
 export interface AppDataBackup {

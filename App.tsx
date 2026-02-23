@@ -16,8 +16,8 @@ const App: React.FC = () => {
     }
   }, []);
 
-  const handleLogin = (username: string, password: string): { success: boolean, message?: string } => {
-    const result = api.login(username, password);
+  const handleLogin = async (username: string, password: string): Promise<{ success: boolean, message?: string }> => {
+    const result = await api.login(username, password);
     if (result.success && result.user) {
       setCurrentUser(result.user);
       sessionStorage.setItem('currentUser', JSON.stringify(result.user));

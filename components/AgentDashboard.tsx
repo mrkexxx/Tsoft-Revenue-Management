@@ -21,9 +21,9 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
   const [packageFilter, setPackageFilter] = useState('all');
   const [activationFilter, setActivationFilter] = useState('all');
   const [paymentFilter, setPaymentFilter] = useState('all');
+  const [emailFilter, setEmailFilter] = useState('');
 
   // Form state
-  const [accountName, setAccountName] = useState('');
   const [accountEmail, setAccountEmail] = useState('');
   const [selectedPackageId, setSelectedPackageId] = useState<number | ''>('');
   
@@ -55,9 +55,10 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
       const packageMatch = packageFilter === 'all' || order.packageId === parseInt(packageFilter, 10);
       const activationMatch = activationFilter === 'all' || order.status === activationFilter;
       const paymentMatch = paymentFilter === 'all' || order.paymentStatus === paymentFilter;
-      return packageMatch && activationMatch && paymentMatch;
+      const emailMatch = !emailFilter || order.account_email?.toLowerCase().includes(emailFilter.toLowerCase());
+      return packageMatch && activationMatch && paymentMatch && emailMatch;
     });
-  }, [orders, packageFilter, activationFilter, paymentFilter]);
+  }, [orders, packageFilter, activationFilter, paymentFilter, emailFilter]);
 
   const agentCommission = user.discountPercentage || 0;
 
@@ -74,7 +75,6 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
   }, [orders, agentCommission]);
   
   const resetForm = () => {
-    setAccountName('');
     setAccountEmail('');
     setSelectedPackageId('');
     setShowForm(false);
@@ -83,10 +83,27 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
 
   const handleAddOrder = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPackageId || !accountName) {
+    if (!selectedPackageId || !accountEmail) {
       alert('Vui lòng điền đầy đủ thông tin bắt buộc.');
       return;
     }
+
+    // Check for duplicate email on the same day
+    const today = new Date();
+    const isDuplicate = orders.some(order => {
+        if (!order.account_email) return false;
+        const orderDate = parseISO(order.sold_at);
+        return order.account_email.toLowerCase() === accountEmail.toLowerCase() && 
+               orderDate.getDate() === today.getDate() &&
+               orderDate.getMonth() === today.getMonth() &&
+               orderDate.getFullYear() === today.getFullYear();
+    });
+
+    if (isDuplicate) {
+        alert('Đơn hàng với email này đã tồn tại trong ngày hôm nay. Không thể thêm mới.');
+        return;
+    }
+
     setIsSubmitting(true);
     
     const selectedPackage = packages.find(p => p.id === selectedPackageId);
@@ -96,7 +113,7 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
 
     // Fix: Changed type to Omit<Order, 'id'> and added the required 'sold_at' property.
     const newOrderData: Omit<Order, 'id'> = {
-      account_name: accountName,
+      account_name: accountEmail.split('@')[0], // Use part of email as name since it's required by type
       account_email: accountEmail,
       packageId: selectedPackageId,
       price: finalPrice,
@@ -125,12 +142,12 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
       account_email: o.account_email,
       packageName: packages.find(p => p.id === o.packageId)?.name || 'N/A',
       price: o.price, 
-      netRevenue: o.price * (1 - discount / 100),
+      netRevenue: o.actual_revenue != null ? o.actual_revenue : o.price * (1 - discount / 100),
       status: o.status, 
       paymentStatus: o.paymentStatus,
       sold_at: format(parseISO(o.sold_at), 'dd/MM/yyyy HH:mm'),
     }));
-    const headers = { id: 'ID', account_name: 'Tên tài khoản', account_email: 'Email', packageName: 'Gói', price: 'Giá', netRevenue: 'Phải thu', status: 'Trạng thái', paymentStatus: 'Thanh toán', sold_at: 'Ngày bán' };
+    const headers = { id: 'ID', account_name: 'Tên tài khoản', account_email: 'Email', packageName: 'Gói', price: 'Giá', netRevenue: 'Phải thu', status: 'Tình trạng approve', paymentStatus: 'Thanh toán', sold_at: 'Ngày bán' };
     exportToCSV(dataToExport, headers, `tsoft_revenue_${user.username}_orders`);
   };
 
@@ -179,9 +196,8 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
           <form onSubmit={handleAddOrder} className="p-8 space-y-6 bg-slate-800 rounded-lg shadow-lg">
              <h2 className="text-3xl font-bold text-slate-100">Tạo đơn hàng mới</h2>
              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                <input type="text" placeholder="Tên tài khoản khách hàng" value={accountName} onChange={e => setAccountName(e.target.value)} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md focus:ring-primary-focus focus:border-primary-focus" />
-                <input type="email" placeholder="Email khách hàng (nếu có)" value={accountEmail} onChange={e => setAccountEmail(e.target.value)} className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md focus:ring-primary-focus focus:border-primary-focus" />
-                <select value={selectedPackageId} onChange={e => setSelectedPackageId(Number(e.target.value))} required className="w-full px-4 py-3 text-lg md:col-span-2 bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
+                <input type="email" placeholder="Email khách hàng" value={accountEmail} onChange={e => setAccountEmail(e.target.value)} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md focus:ring-primary-focus focus:border-primary-focus" />
+                <select value={selectedPackageId} onChange={e => setSelectedPackageId(Number(e.target.value))} required className="w-full px-4 py-3 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
                   <option value="" disabled>-- Chọn gói --</option>
                   {packages.map(p => <option key={p.id} value={p.id}>{p.name} ({formatCurrency(p.price)})</option>)}
                 </select>
@@ -201,14 +217,21 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
         <div className="flex flex-col items-start justify-between gap-4 mb-6 md:flex-row md:items-center">
             <h2 className="text-3xl font-bold text-slate-100">Lịch sử đơn hàng</h2>
             <div className="flex flex-col items-stretch w-full gap-4 md:w-auto md:flex-row">
+              <input 
+                  type="text" 
+                  placeholder="Tìm theo email khách hàng..." 
+                  value={emailFilter} 
+                  onChange={e => setEmailFilter(e.target.value)} 
+                  className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md focus:ring-primary-focus focus:border-primary-focus"
+              />
               <select value={packageFilter} onChange={e => setPackageFilter(e.target.value)} className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
                   <option value="all">Tất cả gói</option>
                   {packages.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </select>
               <select value={activationFilter} onChange={e => setActivationFilter(e.target.value)} className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
                   <option value="all">Mọi trạng thái</option>
-                  <option value={ActivationStatus.Activated}>{ActivationStatus.Activated}</option>
-                  <option value={ActivationStatus.NotActivated}>{ActivationStatus.NotActivated}</option>
+                  <option value={ActivationStatus.Activated}>Approved</option>
+                  <option value={ActivationStatus.NotActivated}>Not Approved</option>
               </select>
               <select value={paymentFilter} onChange={e => setPaymentFilter(e.target.value)} className="px-4 py-2 text-lg bg-slate-700 text-white border border-slate-600 rounded-md appearance-none focus:ring-primary-focus focus:border-primary-focus">
                   <option value="all">Mọi thanh toán</option>
@@ -220,11 +243,11 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
         </div>
         <table className="w-full text-left table-auto">
           <thead>
-            <tr className="border-b border-slate-700"><th className="p-3 text-lg font-semibold tracking-wide">Tài khoản</th><th className="p-3 text-lg font-semibold tracking-wide">Gói</th><th className="p-3 text-lg font-semibold tracking-wide">Giá</th><th className="p-3 text-lg font-semibold tracking-wide">Phải thu</th><th className="p-3 text-lg font-semibold tracking-wide">Ngày bán</th><th className="p-3 text-lg font-semibold tracking-wide">Trạng thái</th><th className="p-3 text-lg font-semibold tracking-wide">Thanh toán</th></tr>
+            <tr className="border-b border-slate-700"><th className="p-3 text-lg font-semibold tracking-wide">Tài khoản</th><th className="p-3 text-lg font-semibold tracking-wide">Gói</th><th className="p-3 text-lg font-semibold tracking-wide">Giá</th><th className="p-3 text-lg font-semibold tracking-wide">Phải thu</th><th className="p-3 text-lg font-semibold tracking-wide">Ngày bán</th><th className="p-3 text-lg font-semibold tracking-wide">Tình trạng approve</th><th className="p-3 text-lg font-semibold tracking-wide">Thanh toán</th></tr>
           </thead>
           <tbody>
             {filteredOrders.map(order => {
-              const netRevenue = order.price * (1 - (user.discountPercentage || 0) / 100);
+              const netRevenue = order.actual_revenue != null ? order.actual_revenue : order.price * (1 - (user.discountPercentage || 0) / 100);
               return (
               <tr key={order.id} className="border-b border-slate-700 hover:bg-slate-700/50">
                 <td className="p-3"><p className="font-bold text-lg">{order.account_name}</p><p className="text-sm text-slate-400">{order.account_email}</p></td>
@@ -232,7 +255,7 @@ const AgentDashboard: React.FC<AgentDashboardProps> = ({ user, onLogout }) => {
                 <td className="p-3 text-lg">{formatCurrency(order.price)}</td>
                 <td className="p-3 text-lg font-semibold text-yellow-400">{formatCurrency(netRevenue)}</td>
                 <td className="p-3 text-lg">{format(parseISO(order.sold_at), 'dd/MM/yyyy')}</td>
-                <td className="p-3"><span className={`px-2 py-1 text-sm font-semibold rounded-full ${order.status === ActivationStatus.Activated ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{order.status}</span></td>
+                <td className="p-3"><span className={`px-2 py-1 text-sm font-semibold rounded-full ${order.status === ActivationStatus.Activated ? 'bg-green-500/20 text-green-400' : 'bg-yellow-500/20 text-yellow-400'}`}>{order.status === ActivationStatus.Activated ? 'Approved' : 'Not Approved'}</span></td>
                 <td className="p-3"><span className={`px-2 py-1 text-sm font-semibold rounded-full ${order.paymentStatus === PaymentStatus.Paid ? 'bg-blue-500/20 text-blue-400' : 'bg-red-500/20 text-red-400'}`}>{order.paymentStatus}</span></td>
               </tr>
             )})}
