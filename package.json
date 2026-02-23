@@ -1,0 +1,27 @@
+{
+  "name": "tsoft-revenue-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@vitejs/plugin-react": "^5.1.4",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.575.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "recharts": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.0",
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "tailwindcss": "^4.2.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "start": "vite preview"
+  }
+}
